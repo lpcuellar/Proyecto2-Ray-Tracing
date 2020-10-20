@@ -3,7 +3,7 @@
 ##  GRÁFICAS POR COMPUTADORA
 ##  SECCIÓN 20
 ##
-##  DR2: LIGHT AND SHADOWS
+##  PROYECTO 2: RAY TRACING
 ##  LUIS PEDRO CUÉLLAR - 18220
 ##
 
@@ -43,36 +43,31 @@ class MathGl(object):
 
         return c
 
-    def add(self, a, b):
-        length = len(a)
-        c = []
-
-        if length == 2 :
-            c.append(a[0] + b[0])
-            c.append(a[1] + b[1])
-
-        elif length == 3 :
-            c.append(a[0] + b[0])
-            c.append(a[1] + b[1])
-            c.append(a[2] + b[2])
-
-        return c
-
     ##  this fucntion does the norm of a vector
     def norm(self, a):
-        length = len(a)
-        c = 0
+        normal = 0
+        for x in a:
+            normal += x **2
 
-        if length == 2 :
-            c = (a[0] ** 2) + (a[1] ** 2)
-            c = c ** 0.5
+        normal = normal ** 0.5
 
+        for x in range(len(a)):
+            try:
+                a[x] /= normal
+            except ZeroDivisionError:
+                pass
+        
+        return a
 
-        elif length == 3 :
-            c = (a[0] ** 2) + (a[1] ** 2) + (a[2] ** 2)
-            c = c ** 0.5
+    ##  this function gets the magnitud of a vector
+    def getVectorMagnitud(self, a):
+        magnitud = 0
+        for x in a:
+            magnitud += x ** 2
+        
+        magnitud = magnitud ** 0.5
 
-        return c
+        return magnitud
 
     ##  this function does the dot product between two arrays or numbers
     def dot(self, a, b):
@@ -112,6 +107,7 @@ class MathGl(object):
 
         return u, v, w
 
+    ##  this function does the division between two matrix
     def divMatrix(self, A, B):
         try:
             for i in range(len(A)):
@@ -121,12 +117,14 @@ class MathGl(object):
         except:
             pass
 
+    ##  this function does the transpose of a matrix
     def transposeMatrix(self, m):
         return list(map(list, zip(*m)))
 
     def getMatrixMinor(self, m, i, j):
         return [row[:j] + row[j + 1:] for row in (m[:i] + m[i + 1:])]
 
+    ##  this function calculates de determinants of a matrix
     def getMatrixDeternminant(self, m):
         #base case for 2x2 matrix
         if len(m) == 2:
@@ -137,6 +135,7 @@ class MathGl(object):
             determinant += ((-1) ** c) * m[0][c] * self.getMatrixDeternminant(self.getMatrixMinor(m, 0, c))
         return determinant
 
+    ##  this function does the inverse of a matrix
     def getMatrixInverse(self, m):
         determinant = self.getMatrixDeternminant(m)
         #special case for 2x2 matrix:
@@ -158,6 +157,7 @@ class MathGl(object):
                 cofactors[r][c] = cofactors[r][c] / determinant
         return cofactors
 
+    ##  this function does the product between a vector and a matrix
     def getMVProduct(self, v, G):
         result = []
         for i in range(len(G[0])): #this loops through columns of the matrix
@@ -167,25 +167,110 @@ class MathGl(object):
             result.append(total)
         return result
 
+    ##  this functin does the product between two matrix
     def getMatricesProduct(self, a, b):
         if len(a[0]) != len(b):
             return None
 
         # Create the result matrix and fill it with zeros
         output_list=[]
-            
-        for i in range(len(a)):
-            row = []
 
-            for j in range(len(a[i])):
-                mult = a[i][j] * b[i][j]
-                row.append(mult)
-            
-            output_list.append(row)
-
+        temp_row=len(b[0])*[0]
+        for r in range(len(a)):
+            output_list.append(temp_row[:])
+        for row_index in range(len(a)):
+            for col_index in range(len(b[0])):
+                sum = 0
+                for k in range(len(a[0])):
+                    sum += a[row_index][k] * b[k][col_index]
+                output_list[row_index][col_index] = sum
         return output_list
 
-    def deg2rad(self, A):
+    ##  this function calculates the conversion of degrees to radians
+    def getDeg2Rad(self, A):
         return (A * np.pi / 180)
 
-    
+    ##  this function does the sum of two vectors
+    def getSumVectors(self, a, b):
+        if len(a) != len(b):
+            return
+        
+        length = len(a)
+        c = [0 for x in a]
+
+        for index in range(length):
+            c[index] = a[index] + b[index]
+
+        return c
+
+    ##  this function does the product between two vectors
+    def getProductVectors(self, a, b):
+        result = [0 for x in a]
+        length = len(a)
+
+        for i in range(length):
+            result[i] = a[i] * b[i]
+
+        return result
+
+    ##  this function does the product between a vector and a scalar
+    def getVxSProduct(self, v, s):
+        result = [0 for x in v]
+        length = len(v)
+
+        for i in range(length):
+            result[i] = v[i] * s
+
+        return result 
+
+    # calcula el vector de reflexion
+    def getReflectVector(self, normal, direction):
+        # R = 2 * (N dot L) * N - L
+        reflect = 2 * self.dot(normal, direction)
+        reflect = self.getVxSProduct(normal, reflect)
+        reflect = self.subtract(reflect, direction)
+        reflect = self.norm(reflect)
+        
+        return reflect
+        
+    # (N, I, ior) - normal, vector incidente y el indice de refracción
+    def getRefractVector(self, N, I, ior):
+        cosi = max(-1, min(1, np.dot(I, N)))
+        etai = 1
+        etat = ior
+
+        if cosi < 0:
+            cosi = -cosi
+        else:
+            etai, etat = etat, etai
+            N = self.getVxSProduct(-1, N)
+
+        eta = etai/etat
+        k = 1 - eta * eta * (1 - (cosi * cosi))
+
+        if k < 0: 
+            return None
+        
+        R = self.getSumVectors(self.getVxSProduct(eta, I), self.getVxSProduct((eta * cosi - k**0.5), N))
+        return self.norm(R)
+
+    # (N, I, ior) - normal, vector incidente y el indice de refracción
+    def getFresnel(self, N, I, ior):
+
+        cosi = max(-1, min(1, self.dot(I, N)))
+        etai = 1
+        etat = ior
+
+        if cosi > 0:
+            etai, etat = etat, etai
+
+        sint = etai / etat * (max(0, 1 - cosi * cosi) ** 0.5)
+
+        if sint >= 1:
+            return 1
+
+        cost = max(0, 1 - sint * sint) ** 0.5
+        cosi = abs(cosi)
+        Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost))
+        Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost))
+        return (Rs * Rs + Rp * Rp) / 2

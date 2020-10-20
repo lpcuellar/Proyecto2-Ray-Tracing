@@ -3,7 +3,7 @@
 ##  GRÁFICAS POR COMPUTADORA
 ##  SECCIÓN 20
 ##
-##  DR2: LIGHT AND SHADOWS
+##  PROYECTO 2: RAY TRACING
 ##  LUIS PEDRO CUÉLLAR - 18220
 ##
 
@@ -12,9 +12,13 @@ import struct
 import numpy as np
 from numpy import cos, sin, tan
 
-from object import Object
+from obj import Obj
 from mathGl import MathGl
 
+OPAQUE = 0
+REFLECTIVE = 1
+TRANSPARENT = 2
+MAX_RECURSION_DEPTH = 3
 
 ##  char --> 1 byte
 def char(var):
@@ -46,8 +50,11 @@ class Raytracer(object):
         self.fov = 60
         self.scene = []
 
-        self.pointLight = None
+        self.pointLights = []
         self.ambientLight = None
+        self.directionalLight = None
+
+        self.environmentMap = None
 
         self.mathGl = MathGl()
         self.glCreateWindow(width, height)
@@ -110,6 +117,174 @@ class Raytracer(object):
     def glColor(self, r, g, b):
         self.current_color = color(r, g, b)
 
+    def rtRender(self):
+        for y in range(self.height):
+            for x in range(self.width):
+                px = 2 * ((x + 0.5) / self.width) - 1
+                py = 2 * ((y + 0.5) / self.height) - 1
+
+                tangente = tan((self.fov * np.pi / 180) / 2)
+                r = tangente * self.width / self.height
+
+                px *= r
+                py *= tangente
+
+                direction = [px, py, -1]
+                direction = self.mathGl.norm(direction)
+
+                self.glVertex_coordinates(x, y, self.castRay(self.camera_position, direction))
+
+    def scene_intercept(self, origin, direction, objOrigin = None):
+        tempZBuffer = float('inf')
+        material = None
+        intersect = None
+
+        for obj in self.scene:
+            if obj is not objOrigin:
+                hit = obj.ray_intersect(origin, direction)
+                if hit is not None:
+                    if hit.distance < tempZBuffer:
+                        tempZBuffer = hit.distance
+                        material = obj.material
+                        intersect = hit
+
+        return material, intersect
+
+    def castRay(self, origin, direction, objOrigin = None, recursion = 0):
+        material, intersect = self.scene_intercept(origin, direction, objOrigin)
+
+        if material is None or recursion >= MAX_RECURSION_DEPTH:
+            if self.environmentMap:
+                return self.environmentMap.getColor(direction)
+            return self.bg_color
+
+        objectColor = [ material.diffuse[2] / 255,
+                        material.diffuse[1] / 255,
+                        material.diffuse[0] / 255 ]
+
+        ambientColor = [0, 0, 0]
+        directionalLightColor = [0, 0, 0]
+        pointLightColor = [0, 0, 0]
+
+        reflectorColor = [0, 0, 0]
+        refractorColor = [0, 0, 0]
+
+        finalColor = [0, 0, 0]
+
+        viewDirection = self.mathGl.subtract(self.camera_position, intersect.point)
+        viewDirection = self.mathGl.norm(viewDirection)
+
+        if self.ambientLight:
+            ambientColor = [ self.ambientLight.strength * self.ambientLight.color[2] / 255,
+                             self.ambientLight.strength * self.ambientLight.color[1] / 255,
+                             self.ambientLight.strength * self.ambientLight.color[0] / 255 ]
+        
+        if self.directionalLight:
+            diffuseColor = [0, 0, 0]
+            specColor = [0, 0, 0]
+            shadow_intensity = 0
+
+            light_direction = self.mathGl.getVxSProduct(self.directionalLight.direction, -1)
+
+            intensity = self.directionalLight.intensity * max(0, self.mathGl.dot(light_direction, intersect.normal))
+
+            diffuseColor = [ intensity * self.directionalLight.color[2] / 255,
+                             intensity * self.directionalLight.color[1] / 255,
+                             intensity * self.directionalLight.color[0] / 255 ]
+
+            reflect = self.mathGl.getReflectVector(intersect.normal, light_direction)
+
+            specIntensity = self.directionalLight.intensity * (max(0, self.mathGl.dot(viewDirection, reflect)) ** material.spec)
+            specColor = [ specIntensity * self.directionalLight.color[2] / 255,
+                          specIntensity * self.directionalLight.color[1] / 255,
+                          specIntensity * self.directionalLight.color[0] / 255 ]
+    
+            shadMat, shadInter = self.scene_intercept(intersect.point, light_direction, intersect.sceneObject)
+
+            if shadInter is not None:
+                shadow_intensity = 1
+
+            directionalLightColor = self.mathGl.getVxSProduct(self.mathGl.getSumVectors(diffuseColor, specColor), (1 - shadow_intensity)) 
+
+        for pointLight in self.pointLights:
+            diffuseColor = [0, 0, 0]
+            specColor = [0, 0, 0]
+            shadow_intensity = 0
+
+            light_direction = self.mathGl.subtract(pointLight.position, intersect.point)
+            light_direction = self.mathGl.norm(light_direction)
+
+            intensity = pointLight.intensity * max(0, self.mathGl.dot(light_direction, intersect.normal))
+            diffuseColor = [ intensity * pointLight.color[2] / 255,
+                             intensity * pointLight.color[1] / 255,
+                             intensity * pointLight.color[0] / 255 ]
+            
+            reflect = self.mathGl.getReflectVector(intersect.normal, light_direction)
+
+            spec_intensity = pointLight.intensity * (max(0, self.mathGl.dot(viewDirection, reflect)) ** material.spec)
+            specColor = [ spec_intensity * pointLight.color[2] / 255,
+                          spec_intensity * pointLight.color[1] / 255,
+                          spec_intensity * pointLight.color[0] / 255 ]
+
+            shadMat, shadInter = self.scene_intercept(intersect.point, light_direction, intersect.sceneObject)
+
+            if shadInter is not None and shadInter.distance < self.mathGl.getVectorMagnitud(self.mathGl.subtract(pointLight.position, intersect.point)):
+                shadow_intensity = 1
+
+            pointLightColor = self.mathGl.getSumVectors(pointLightColor, self.mathGl.getVxSProduct(self.mathGl.getSumVectors(diffuseColor, specColor), (1 - shadow_intensity)))
+
+        if material.matType == OPAQUE:
+            finalColor = self.mathGl.getSumVectors(ambientColor, self.mathGl.getSumVectors(directionalLightColor, pointLightColor))
+
+            if material.texture and intersect.texCoords:
+                texColor = material.texture.getColor(intersect.texCoords[0], intersect.texCoords[1])
+
+                texColor = [ texColor[2] / 255,
+                                texColor[1] / 255,
+                                texColor[0] / 255 ]
+
+                finalColor = self.mathGl.getProductVectors(finalColor, texColor)
+        
+        elif material.matType == REFLECTIVE:
+            reflect = self.mathGl.getReflectVector(intersect.normal, self.mathGl.getVxSProduct(direction, -1))
+            reflectColor = self.castRay(intersect.point, reflect, intersect.sceneObject, recursion + 1)
+            reflectColor = [ reflectColor[2] / 255,
+                             reflectColor[1] / 255,
+                             reflectColor[0] / 255 ]
+
+            finalColor = reflectColor
+
+        elif material.matType == TRANSPARENT:
+            outside = self.mathGl.dot(direction, intersect.normal) < 0
+            bias = self.mathGl.getVxSProduct(intersect.normal, 0.001)
+            kr = self.mathGl.getFresnel(intersect.normal, direction, material.ior)
+
+            reflect = self.mathGl.getReflectVector(intersect.normal, self.mathGl.getVxSProduct(direction, -1))
+
+            reflectOrigin = self.mathGl.getSumVectors(intersect.point, bias) if outside else self.mathGl.subtract(intersect.point, bias)
+            reflectColor = self.castRay(reflectOrigin, reflect, None, recursion + 1)
+            reflectColor = [ reflectColor[2] / 255,
+                             reflectColor[1] / 255,
+                             reflectColor[0] / 255 ]
+
+            if kr < 1:
+                refractor = self.mathGl.getRefractVector(intersect.normal, direction, material.ior)
+                refractorOrigin = self.mathGl.subtract(intersect.point, bias) if outside else self.mathGl.getSumVectors(intersect.point, bias)
+                refractorColor = self.castRay(refractorOrigin, refractor, None, recursion + 1)
+                refractorColor = [ refractorColor[2] / 255,
+                                   refractorColor[1] / 255,
+                                   refractorColor[0] / 255 ]
+
+            finalColor = self.mathGl.getSumVectors(self.mathGl.getVxSProduct(reflectColor, kr), self.mathGl.getVxSProduct(refractorColor, (1 - kr)))
+
+        finalColor = self.mathGl.getProductVectors(finalColor, objectColor)
+
+        r = min(1, finalColor[0])
+        g = min(1, finalColor[1])
+        b = min(1, finalColor[2])
+
+        return color(r, g, b)
+        
     ##  this function is used to write the image into the file, and saves it
     def glFinish(self, filename):
         file = open(filename, 'wb')
@@ -187,87 +362,3 @@ class Raytracer(object):
                 archivo.write(color(depth, depth, depth))
 
         archivo.close()
-    
-    def rtRender(self):
-        for y in range(self.height):
-            for x in range(self.width):
-                px = 2 * ((x + 0.5) / self.width) - 1
-                py = 2 * ((y + 0.5) / self.height) - 1
-
-                tangente = tan((self.fov * np.pi / 180) / 2)
-                r = tangente * self.width / self.height
-
-                px *= r
-                py *= tangente
-
-                direction = [px, py, -1]
-                nomr_direction = self.mathGl.norm(direction)
-                direction = self.mathGl.divMatrix(direction, nomr_direction)
-
-                material = None
-                intersect = None
-
-                for obj in self.scene:
-                    hit = obj.ray_intersect(self.camera_position, direction)
-                    if hit is not None:
-                        if hit.distance < self.zbuffer[y][x]:
-                            self.zbuffer[y][x] = hit.distance
-                            material = obj.material
-                            intersect = hit
-
-                if intersect is not None:
-                    self.glVertex_coordinates(x, y, self.pointColor(material, intersect))
-    
-    def pointColor(self, material, intersect):
-        objectColor = [material.diffuse[2] / 255,
-                        material.diffuse[1] / 255,
-                        material.diffuse[0] / 255] 
-
-        ambientColor = [0, 0, 0]
-        diffuseColor = [0, 0, 0]
-        specColor = [0, 0, 0]
-
-        shadow_intensity = 0
-
-        if self.ambientLight:
-            ambientColor = [self.ambientLight.strength * self.ambientLight.color[2] / 255,
-                            self.ambientLight.strength * self.ambientLight.color[1] / 255,
-                            self.ambientLight.strength * self.ambientLight.color[0] / 255]
-
-        if self.pointLight:
-            light_dir = self.mathGl.subtract(self.pointLight.position, intersect.point)
-            norm_light_dir = self.mathGl.norm(light_dir)
-            light_dir = self.mathGl.divMatrix(light_dir, norm_light_dir)
-
-            intensity = self.pointLight.intensity * max(0, self.mathGl.dot(light_dir, intersect.normal))
-            diffuseColor = [intensity * self.pointLight.color[2] / 255,
-                            intensity * self.pointLight.color[1] / 255,
-                            intensity * self.pointLight.color[2] / 255]
-
-            view_dir = self.mathGl.subtract(self.camera_position, intersect.point)
-            norm_view_dir = self.mathGl.norm(view_dir)
-            view_dir = self.mathGl.divMatrix(view_dir, norm_view_dir)
-
-            reflect = 2 * self.mathGl.dot(intersect.normal, light_dir)
-            print(reflect, intersect.normal)
-            reflect = self.mathGl.getMatricesProduct(reflect, intersect.normal)
-            reflect = self.mathGl.subtract(reflect, light_dir)
-
-            spec_intensity = self.pointLight.intensity * (max(0, self.mathGl.dot(view_dir, reflect)) ** material.spec)
-
-            specColor = [spec_intensity * self.pointLight.color[2] / 255,
-                        spec_intensity * self.pointLight.color[1] / 255,
-                        spec_intensity * self.pointLight.color[0] / 255]
-            for obj in self.scene:
-                for obj in intersect.sceneObject:
-                    hit = obj.ray_intersect(intersect.point, light_dir)
-                    if (hit is not None) and (intersect.distance < self.mathGl.norm(self.mathGl.subtract(self.pointLight.position, intersect.point))):
-                        shadow_intensity = 1
-            
-        finalColor = (ambientColor + (1 - shadow_intensity) * (diffuseColor + specColor)) * objectColor
-
-        r = min(1, finalColor[0])
-        g = min(1, finalColor[1])
-        b = min(1, finalColor[2])
-
-        return color(r, g, b)
